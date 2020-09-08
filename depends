@@ -6,6 +6,7 @@ debootstrap
 zerofree
 zip
 mkdosfs:dosfstools
+mkfs.f2fs:f2fs-tools
 capsh:libcap2-bin
 bsdtar
 grep

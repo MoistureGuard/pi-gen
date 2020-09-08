@@ -10,7 +10,7 @@ rm -rf "${ROOTFS_DIR}"
 mkdir -p "${ROOTFS_DIR}"
 
 BOOT_SIZE="$((256 * 1024 * 1024))"
-ROOT_SIZE=$(du --apparent-size -s "${EXPORT_ROOTFS_DIR}" --exclude var/cache/apt/archives --exclude boot --block-size=1 | cut -f 1)
+ROOT_SIZE=$(du -x --apparent-size -s "${EXPORT_ROOTFS_DIR}" --exclude var/cache/apt/archives --exclude boot --block-size=1 | cut -f 1)
 
 # All partition sizes and starts will be aligned to this size
 ALIGN="$((4 * 1024 * 1024))"
@@ -30,7 +30,12 @@ truncate -s "${IMG_SIZE}" "${IMG_FILE}"
 
 parted --script "${IMG_FILE}" mklabel msdos
 parted --script "${IMG_FILE}" unit B mkpart primary fat32 "${BOOT_PART_START}" "$((BOOT_PART_START + BOOT_PART_SIZE - 1))"
-parted --script "${IMG_FILE}" unit B mkpart primary ext4 "${ROOT_PART_START}" "$((ROOT_PART_START + ROOT_PART_SIZE - 1))"
+if [ "$ROOTFS_TYPE" = "f2fs" ]; then
+  # drop partition type as parted doesn't support f2fs typ
+  parted --script "${IMG_FILE}" unit B mkpart primary "${ROOT_PART_START}" "$((ROOT_PART_START + ROOT_PART_SIZE - 1))"
+else
+  parted --script "${IMG_FILE}" unit B mkpart primary ext4 "${ROOT_PART_START}" "$((ROOT_PART_START + ROOT_PART_SIZE - 1))"
+fi
 
 PARTED_OUT=$(parted -sm "${IMG_FILE}" unit b print)
 BOOT_OFFSET=$(echo "$PARTED_OUT" | grep -e '^1:' | cut -d':' -f 2 | tr -d B)
@@ -44,18 +49,31 @@ ROOT_DEV=$(losetup --show -f -o "${ROOT_OFFSET}" --sizelimit "${ROOT_LENGTH}" "$
 echo "/boot: offset $BOOT_OFFSET, length $BOOT_LENGTH"
 echo "/:     offset $ROOT_OFFSET, length $ROOT_LENGTH"
 
-ROOT_FEATURES="^huge_file"
-for FEATURE in metadata_csum 64bit; do
+if [ "$ROOTFS_TYPE" != "f2fs" ]; then
+  ROOT_FEATURES="^huge_file"
+  for FEATURE in metadata_csum 64bit; do
 	if grep -q "$FEATURE" /etc/mke2fs.conf; then
 	    ROOT_FEATURES="^$FEATURE,$ROOT_FEATURES"
 	fi
-done
-mkdosfs -n boot -F 32 -v "$BOOT_DEV" > /dev/null
-mkfs.ext4 -L rootfs -O "$ROOT_FEATURES" "$ROOT_DEV" > /dev/null
+  done
+fi
 
-mount -v "$ROOT_DEV" "${ROOTFS_DIR}" -t ext4
+mkdosfs -n boot -F 32 -v "$BOOT_DEV" > /dev/null
+if [ "$ROOTFS_TYPE" = "f2fs" ]; then
+  mkfs.f2fs -l rootfs "$ROOT_DEV" > /dev/null
+  mount -v "$ROOT_DEV" "${ROOTFS_DIR}" -t f2fs
+else
+  mkfs.ext4 -L rootfs -O "$ROOT_FEATURES" "$ROOT_DEV" > /dev/null
+  mount -v "$ROOT_DEV" "${ROOTFS_DIR}" -t ext4
+fi
+
 mkdir -p "${ROOTFS_DIR}/boot"
 mount -v "$BOOT_DEV" "${ROOTFS_DIR}/boot" -t vfat
 
-rsync -aHAXx --exclude /var/cache/apt/archives --exclude /boot "${EXPORT_ROOTFS_DIR}/" "${ROOTFS_DIR}/"
+if [ "$ROOTFS_TYPE" = "f2fs" ]; then
+  # f2fs doesn't support capabilities, dropped X
+  rsync -aHAx --exclude /var/cache/apt/archives --exclude /boot "${EXPORT_ROOTFS_DIR}/" "${ROOTFS_DIR}/"
+else
+  rsync -aHAXx --exclude /var/cache/apt/archives --exclude /boot "${EXPORT_ROOTFS_DIR}/" "${ROOTFS_DIR}/"
+fi
 rsync -rtx "${EXPORT_ROOTFS_DIR}/boot/" "${ROOTFS_DIR}/boot/"

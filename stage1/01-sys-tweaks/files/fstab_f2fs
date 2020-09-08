@@ -1,0 +1,5 @@
+proc            /proc           proc    defaults          0       0
+BOOTDEV  /boot           vfat    defaults          0       2
+ROOTDEV  /               f2fs    defaults,noatime  0       1
+tmpfs           /tmp            tmpfs   mode=1777,strictatime,nosuid,nodev,size=100m 0 0
+tmpfs           /var/tmp        tmpfs   mode=1777,strictatime,nosuid,nodev,size=32m  0 0
